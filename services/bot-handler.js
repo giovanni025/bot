@@ -38,6 +38,11 @@ class IPTVBot {
     try {
       console.log(`📨 Mensagem de ${phone}: ${message}`);
       
+      // Log de mídia se presente
+      if (metadata.mediaData) {
+        console.log(`📎 Mídia recebida: ${metadata.mediaData.type} - ${metadata.mediaData.fileName}`);
+      }
+      
       // Buscar ou criar usuário
       let user = await this.getOrCreateUser(phone);
       
@@ -53,7 +58,7 @@ class IPTVBot {
         await telegramAdmin.notifyNewUser(phone, user.name || 'Não informado');
       } else {
         // Processar mensagem baseada no estado atual
-        response = await this.processMessageByState(message, user);
+        response = await this.processMessageByState(message, user, metadata);
       }
 
       // Atualizar usuário
@@ -74,7 +79,7 @@ class IPTVBot {
   /**
    * Processa mensagem baseada no estado atual do usuário
    */
-  async processMessageByState(message, user) {
+  async processMessageByState(message, user, metadata = {}) {
     const msg = message.toLowerCase().trim();
     
     switch (user.current_state) {
@@ -94,7 +99,7 @@ class IPTVBot {
         return await this.handlePlanChoice(message, user);
         
       case this.USER_STATES.PLANO_COMPROVANTE:
-        return await this.handlePlanPaymentProof(message, user);
+        return await this.handlePlanPaymentProof(message, user, metadata);
         
       case this.USER_STATES.RENOVACAO_LOGIN:
         return await this.handleRenewalLogin(message, user);
@@ -103,7 +108,7 @@ class IPTVBot {
         return await this.handleRenewalPlan(message, user);
         
       case this.USER_STATES.RENOVACAO_COMPROVANTE:
-        return await this.handleRenewalPaymentProof(message, user);
+        return await this.handleRenewalPaymentProof(message, user, metadata);
         
       case this.USER_STATES.SUPORTE_PROBLEMA:
         return await this.handleSupportProblem(message, user);
@@ -278,7 +283,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
   /**
    * Recebimento de comprovante de pagamento do plano
    */
-  async handlePlanPaymentProof(message, user) {
+  async handlePlanPaymentProof(message, user, metadata = {}) {
     const msg = message.toLowerCase().trim();
     
     if (msg === 'menu' || msg === 'voltar') {
@@ -309,7 +314,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
     this.clearTempData(user.phone);
     
     // Notificar admin
-    await telegramAdmin.notifyPlanPayment(user.phone, selectedPlan, planPrice, message, subResult.id);
+    await telegramAdmin.notifyPlanPayment(user.phone, selectedPlan, planPrice, message, subResult.id, metadata.mediaData);
     
     return `✅ *COMPROVANTE RECEBIDO!*
 
@@ -381,7 +386,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
   /**
    * Recebimento de comprovante de renovação
    */
-  async handleRenewalPaymentProof(message, user) {
+  async handleRenewalPaymentProof(message, user, metadata = {}) {
     const msg = message.toLowerCase().trim();
     
     if (msg === 'menu' || msg === 'voltar') {
@@ -407,7 +412,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
     this.clearTempData(user.phone);
     
     // Notificar admin
-    await telegramAdmin.notifyRenewalPayment(user.phone, renewalLogin, renewalPlan, renewalPrice, message, renewalResult.id);
+    await telegramAdmin.notifyRenewalPayment(user.phone, renewalLogin, renewalPlan, renewalPrice, message, renewalResult.id, metadata.mediaData);
     
     return `✅ *RENOVAÇÃO SOLICITADA!*
 
@@ -496,6 +501,10 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
     const settings = await this.getSettings();
     const expiryTime = moment(expiresAt).format('DD/MM/YYYY HH:mm');
     
+    // Buscar dados do usuário para personalizar guia
+    const user = await database.get('SELECT * FROM users WHERE phone = ?', [phone]);
+    const deviceGuide = this.generateDeviceGuide(user?.device || 'Android', settings);
+    
     const message = `🎉 *TESTE APROVADO E LIBERADO!* 🎉
 
 📡 *SEUS DADOS DE ACESSO:*
@@ -504,17 +513,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
 🔐 *Senha:* ${password}
 ⏰ *Válido até:* ${expiryTime}
 
-📲 *APPS RECOMENDADOS:*
-• 📱 Android: IPTV Smarters Pro
-• 🍎 iPhone: GSE Smart IPTV
-• 📺 Smart TV: Smart IPTV
-• 💻 PC: VLC Player
-
-📋 *COMO USAR:*
-1️⃣ Baixe o app recomendado
-2️⃣ Adicione nova conexão/playlist
-3️⃣ Cole os dados acima
-4️⃣ Aproveite seu teste!
+${deviceGuide}
 
 ✨ *Gostou?* Digite *2* para ver nossos planos!
 🏠 Digite *MENU* para voltar ao início`;
@@ -526,6 +525,10 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
   async notifyPlanApproved(phone, login, password, plan, expiresAt) {
     const settings = await this.getSettings();
     const expiryTime = moment(expiresAt).format('DD/MM/YYYY HH:mm');
+    
+    // Buscar dados do usuário para personalizar guia
+    const user = await database.get('SELECT * FROM users WHERE phone = ?', [phone]);
+    const deviceGuide = this.generateDeviceGuide(user?.device || 'Android', settings);
     
     const message = `🎉 *PLANO APROVADO E ATIVADO!* 🎉
 
@@ -543,10 +546,7 @@ Sua solicitação foi enviada para nossa equipe. Você receberá as credenciais 
 ✅ Filmes, séries e documentários
 ✅ Esportes Premium + PPV
 
-📲 *BAIXE O APLICATIVO:*
-• 📱 Android: IPTV Smarters Pro
-• 🍎 iPhone: GSE Smart IPTV
-• 📺 Smart TV: Smart IPTV
+${deviceGuide}
 
 🎊 *PARABÉNS!* Sua assinatura está ativa!
 🏠 Digite *MENU* se precisar de ajuda`;
@@ -923,6 +923,165 @@ Descreva seu problema que nosso atendente responderá em breve.
     }
     
     console.log(`🧹 Limpeza concluída. Dados temporários ativos: ${this.userTempData.size}`);
+  }
+
+  /**
+   * Gera guia personalizado baseado no dispositivo do usuário
+   */
+  generateDeviceGuide(device, settings) {
+    const deviceLower = (device || '').toLowerCase();
+    
+    if (deviceLower.includes('android') || deviceLower.includes('celular android')) {
+      return this.getAndroidGuide(settings);
+    } else if (deviceLower.includes('iphone') || deviceLower.includes('ios') || deviceLower.includes('apple')) {
+      return this.getIOSGuide(settings);
+    } else if (deviceLower.includes('smart tv') || deviceLower.includes('samsung') || deviceLower.includes('lg')) {
+      return this.getSmartTVGuide(settings);
+    } else if (deviceLower.includes('tv box') || deviceLower.includes('box') || deviceLower.includes('firestick')) {
+      return this.getFireStickGuide(settings);
+    } else if (deviceLower.includes('computador') || deviceLower.includes('pc') || deviceLower.includes('notebook') || deviceLower.includes('windows')) {
+      return this.getWindowsGuide(settings);
+    } else {
+      return this.getGenericGuide(settings);
+    }
+  }
+
+  getAndroidGuide(settings) {
+    const appName = process.env.APP_ANDROID || 'TiviMate IPTV Player';
+    const storeUrl = process.env.STORE_ANDROID || 'Google Play Store';
+    
+    return `📱 *GUIA PARA ANDROID:*
+
+📲 *1. BAIXAR APLICATIVO:*
+• App: ${appName}
+• Onde: ${storeUrl}
+
+⚙️ *2. CONFIGURAR:*
+• Abra o ${appName}
+• Toque em "Adicionar Playlist"
+• Selecione "Xtream Codes API"
+• Cole os dados acima
+
+🎯 *3. DICAS:*
+• Use WiFi para melhor qualidade
+• Feche outros apps durante uso
+• Reinicie o app se travar
+
+❓ *Problemas?* Digite *4* para suporte`;
+  }
+
+  getIOSGuide(settings) {
+    const appName = process.env.APP_IOS || 'GSE Smart IPTV';
+    const storeUrl = process.env.STORE_IOS || 'App Store';
+    
+    return `🍎 *GUIA PARA iPhone/iPad:*
+
+📲 *1. BAIXAR APLICATIVO:*
+• App: ${appName}
+• Onde: ${storeUrl}
+
+⚙️ *2. CONFIGURAR:*
+• Abra o ${appName}
+• Toque no "+" para adicionar
+• Selecione "Xtream Codes"
+• Insira os dados acima
+
+🎯 *3. DICAS:*
+• Mantenha o app atualizado
+• Use conexão estável
+• Reinicie se necessário
+
+❓ *Problemas?* Digite *4* para suporte`;
+  }
+
+  getSmartTVGuide(settings) {
+    const appName = process.env.APP_TV || 'Smart IPTV';
+    const storeUrl = process.env.STORE_TV || 'Samsung/LG Smart TV Store';
+    
+    return `📺 *GUIA PARA SMART TV:*
+
+📲 *1. BAIXAR APLICATIVO:*
+• App: ${appName}
+• Onde: ${storeUrl}
+
+⚙️ *2. CONFIGURAR:*
+• Abra o ${appName}
+• Vá em "Configurações"
+• Adicione "Nova Conexão"
+• Insira URL, usuário e senha
+
+🎯 *3. DICAS:*
+• Use cabo de rede se possível
+• Verifique atualizações da TV
+• Reinicie a TV se travar
+
+❓ *Problemas?* Digite *4* para suporte`;
+  }
+
+  getFireStickGuide(settings) {
+    const appName = process.env.APP_FIRESTICK || 'TiviMate IPTV Player';
+    const storeUrl = process.env.STORE_FIRESTICK || 'Amazon Appstore';
+    
+    return `🔥 *GUIA PARA FIRESTICK/TV BOX:*
+
+📲 *1. BAIXAR APLICATIVO:*
+• App: ${appName}
+• Onde: ${storeUrl}
+
+⚙️ *2. CONFIGURAR:*
+• Abra o ${appName}
+• Selecione "Add Playlist"
+• Escolha "Xtream Codes API"
+• Insira os dados fornecidos
+
+🎯 *3. DICAS:*
+• Use controle remoto para navegar
+• Mantenha dispositivo ventilado
+• Reinicie se necessário
+
+❓ *Problemas?* Digite *4* para suporte`;
+  }
+
+  getWindowsGuide(settings) {
+    const appName = process.env.APP_WINDOWS || 'VLC Media Player';
+    const storeUrl = process.env.STORE_WINDOWS || 'https://www.videolan.org/vlc/';
+    
+    return `💻 *GUIA PARA WINDOWS:*
+
+📲 *1. BAIXAR APLICATIVO:*
+• App: ${appName}
+• Site: ${storeUrl}
+
+⚙️ *2. CONFIGURAR:*
+• Abra o ${appName}
+• Vá em "Mídia" > "Abrir Fluxo de Rede"
+• Cole: ${settings.iptv_server_url}/get.php?username=SEU_USER&password=SUA_SENHA&type=m3u_plus
+
+🎯 *3. DICAS:*
+• Use conexão cabeada
+• Feche programas desnecessários
+• Atualize o player regularmente
+
+❓ *Problemas?* Digite *4* para suporte`;
+  }
+
+  getGenericGuide(settings) {
+    return `📱 *GUIA DE INSTALAÇÃO:*
+
+📲 *APPS RECOMENDADOS:*
+• 📱 Android: ${process.env.APP_ANDROID || 'TiviMate IPTV Player'}
+• 🍎 iPhone: ${process.env.APP_IOS || 'GSE Smart IPTV'}
+• 📺 Smart TV: ${process.env.APP_TV || 'Smart IPTV'}
+• 🔥 FireStick: ${process.env.APP_FIRESTICK || 'TiviMate IPTV Player'}
+• 💻 Windows: ${process.env.APP_WINDOWS || 'VLC Media Player'}
+
+⚙️ *CONFIGURAÇÃO GERAL:*
+• Baixe o app para seu dispositivo
+• Adicione nova conexão/playlist
+• Use "Xtream Codes API" quando disponível
+• Insira URL, usuário e senha fornecidos
+
+❓ *Problemas?* Digite *4* para suporte`;
   }
 }
 

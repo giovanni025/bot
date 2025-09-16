@@ -75,6 +75,29 @@ async function initializeTelegramAdmin() {
 const evolutionHandler = evolutionWebhooks(broadcast);
 evolutionHandler.registerRoutes(app);
 
+// Rota para download de arquivos grandes
+app.get('/download/:filename', (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const tempDir = process.env.TEMP_FILES_DIR || './temp';
+    const filePath = path.join(tempDir, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    
+    res.download(filePath, filename, (err) => {
+      if (err) {
+        console.error('Erro no download:', err);
+        res.status(500).json({ error: 'Erro ao baixar arquivo' });
+      }
+    });
+  } catch (error) {
+    console.error('Erro na rota de download:', error);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 // Rotas básicas
 app.get('/', async (req, res) => {
   try {

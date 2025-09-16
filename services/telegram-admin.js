@@ -57,6 +57,18 @@ class TelegramAdmin {
       await this.sendMainMenu('🎛️ *IPTV Bot Admin Pro*');
     });
 
+    // Comando /debug - informações do sistema
+    this.bot.onText(/\/debug/, async (msg) => {
+      if (msg.chat.id.toString() !== this.adminChatId) return;
+      await this.sendDebugInfo(msg.chat.id);
+    });
+
+    // Comando /logs - mensagens recentes
+    this.bot.onText(/\/logs/, async (msg) => {
+      if (msg.chat.id.toString() !== this.adminChatId) return;
+      await this.sendRecentLogs(msg.chat.id);
+    });
+
     // COMANDOS ESPECÍFICOS - MOVIDOS PARA SETUP INICIAL
     this.bot.onText(/\/setplan (\d+) (.+) (.+)/, async (msg, match) => {
       if (msg.chat.id.toString() !== this.adminChatId) return;
@@ -951,6 +963,7 @@ ID do Teste: \`${testId}\``;
   }
 
   async notifyPlanPayment(phone, plan, price, proof, planId) {
+  async notifyPlanPayment(phone, plan, price, proof, planId, mediaData = null) {
     if (!this.isInitialized) return;
     
     const keyboard = {
@@ -965,27 +978,32 @@ ID do Teste: \`${testId}\``;
       ]
     };
 
-    const message = `💎 *Novo Plano com Pagamento*
+    let message = `💎 *Novo Plano com Pagamento*
 
 📱 *Telefone:* ${phone}
 📦 *Plano:* ${plan}
 💰 *Valor:* R$ ${price}
-💳 *Comprovante:* ${proof ? proof.substring(0, 100) + '...' : 'Enviado'}
 ⏰ *Solicitado:* ${moment().format('DD/MM/YYYY HH:mm')}
 
 ID do Plano: \`${planId}\``;
 
     try {
-      await this.bot.sendMessage(this.adminChatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
+      // Se há mídia, enviar o arquivo junto
+      if (mediaData) {
+        await this.sendMediaToAdmin(mediaData, message, keyboard);
+      } else {
+        message += `\n💳 *Comprovante:* ${proof ? proof.substring(0, 100) + '...' : 'Texto enviado'}`;
+        await this.bot.sendMessage(this.adminChatId, message, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
+      }
     } catch (error) {
       console.error('Erro ao notificar plano:', error);
     }
   }
 
-  async notifyRenewalPayment(phone, login, plan, price, proof, renewalId) {
+  async notifyRenewalPayment(phone, login, plan, price, proof, renewalId, mediaData = null) {
     if (!this.isInitialized) return;
     
     const keyboard = {
@@ -1000,22 +1018,27 @@ ID do Plano: \`${planId}\``;
       ]
     };
 
-    const message = `🔄 *Nova Renovação com Pagamento*
+    let message = `🔄 *Nova Renovação com Pagamento*
 
 📱 *Telefone:* ${phone}
 👤 *Login Atual:* ${login}
 📦 *Plano:* ${plan}
 💰 *Valor:* R$ ${price}
-💳 *Comprovante:* ${proof ? proof.substring(0, 100) + '...' : 'Enviado'}
 ⏰ *Solicitado:* ${moment().format('DD/MM/YYYY HH:mm')}
 
 ID da Renovação: \`${renewalId}\``;
 
     try {
-      await this.bot.sendMessage(this.adminChatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
+      // Se há mídia, enviar o arquivo junto
+      if (mediaData) {
+        await this.sendMediaToAdmin(mediaData, message, keyboard);
+      } else {
+        message += `\n💳 *Comprovante:* ${proof ? proof.substring(0, 100) + '...' : 'Texto enviado'}`;
+        await this.bot.sendMessage(this.adminChatId, message, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
+      }
     } catch (error) {
       console.error('Erro ao notificar renovação:', error);
     }
@@ -1047,6 +1070,155 @@ ID da Renovação: \`${renewalId}\``;
       await this.bot.sendMessage(this.adminChatId, message, options);
     } catch (error) {
       console.error('❌ Erro ao enviar para admin:', error.message);
+    }
+  }
+
+  /**
+   * Envia mídia para o admin no Telegram
+   */
+  async sendMediaToAdmin(mediaData, caption, keyboard = null) {
+    if (!this.isInitialized || !this.adminChatId || !mediaData) return;
+    
+    try {
+      console.log(`📤 Enviando mídia para admin: ${mediaData.fileName}`);
+      
+      const options = {
+        caption: caption,
+        parse_mode: 'Markdown'
+      };
+      
+      if (keyboard) {
+        options.reply_markup = keyboard;
+      }
+
+      // Se é um arquivo grande (link), enviar como mensagem de texto
+      if (mediaData.type === 'file_link') {
+        const linkMessage = `${caption}\n\n📎 *Comprovante (arquivo grande):*\n🔗 ${mediaData.downloadUrl}\n📁 Arquivo: ${mediaData.fileName}\n📊 Tamanho: ${(mediaData.size / 1024 / 1024).toFixed(2)}MB`;
+        
+        await this.bot.sendMessage(this.adminChatId, linkMessage, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
+        return;
+      }
+
+      // Se é buffer, enviar diretamente
+      if (mediaData.type === 'buffer' && mediaData.buffer) {
+        const mimeType = mediaData.mimeType || '';
+        
+        if (mimeType.startsWith('image/')) {
+          await this.bot.sendPhoto(this.adminChatId, mediaData.buffer, options);
+        } else if (mimeType.startsWith('video/')) {
+          await this.bot.sendVideo(this.adminChatId, mediaData.buffer, options);
+        } else if (mimeType.startsWith('audio/')) {
+          await this.bot.sendAudio(this.adminChatId, mediaData.buffer, options);
+        } else {
+          // Documento genérico
+          await this.bot.sendDocument(this.adminChatId, mediaData.buffer, options, {
+            filename: mediaData.fileName
+          });
+        }
+        
+        console.log(`✅ Mídia enviada com sucesso para admin: ${mediaData.fileName}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Erro ao enviar mídia para admin:', error);
+      
+      // Fallback: enviar apenas a mensagem de texto
+      try {
+        const fallbackMessage = `${caption}\n\n❌ *Erro ao enviar comprovante*\nArquivo: ${mediaData.fileName}\nTipo: ${mediaData.mimeType}\nTamanho: ${mediaData.size ? (mediaData.size / 1024).toFixed(2) + 'KB' : 'N/A'}`;
+        
+        await this.bot.sendMessage(this.adminChatId, fallbackMessage, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
+      } catch (fallbackError) {
+        console.error('❌ Erro no fallback:', fallbackError);
+      }
+    }
+  }
+
+  /**
+   * Envia informações de debug do sistema
+   */
+  async sendDebugInfo(chatId) {
+    try {
+      const totalUsers = await database.get('SELECT COUNT(*) as count FROM users');
+      const pendingTests = await database.get('SELECT COUNT(*) as count FROM free_tests WHERE status = "pending"');
+      const pendingPlans = await database.get('SELECT COUNT(*) as count FROM subscriptions WHERE status = "pending"');
+      const pendingRenewals = await database.get('SELECT COUNT(*) as count FROM renewals WHERE status = "pending"');
+      
+      const debugInfo = `🔧 *INFORMAÇÕES DE DEBUG*
+
+🌐 *Configurações:*
+├ Evolution API: ${process.env.EVOLUTION_API_URL || 'Não configurado'}
+├ Instância: ${process.env.INSTANCE_NAME || 'default'}
+├ Telegram Bot: ${this.isInitialized ? 'Ativo' : 'Inativo'}
+└ Admin ID: ${this.adminChatId || 'Não configurado'}
+
+📊 *Estatísticas:*
+├ Total usuários: ${totalUsers?.count || 0}
+├ Testes pendentes: ${pendingTests?.count || 0}
+├ Planos pendentes: ${pendingPlans?.count || 0}
+└ Renovações pendentes: ${pendingRenewals?.count || 0}
+
+📱 *Apps Configurados:*
+├ Android: ${process.env.APP_ANDROID || 'Não configurado'}
+├ iOS: ${process.env.APP_IOS || 'Não configurado'}
+├ Smart TV: ${process.env.APP_TV || 'Não configurado'}
+├ FireStick: ${process.env.APP_FIRESTICK || 'Não configurado'}
+└ Windows: ${process.env.APP_WINDOWS || 'Não configurado'}
+
+💾 *Sistema:*
+├ Diretório temp: ${process.env.TEMP_FILES_DIR || './temp'}
+├ Tamanho máximo: ${process.env.MAX_FILE_SIZE_MB || '20'}MB
+└ Limpeza: ${process.env.CLEANUP_INTERVAL_HOURS || '24'}h
+
+⏰ *Timestamp:* ${moment().format('DD/MM/YYYY HH:mm:ss')}`;
+
+      await this.bot.sendMessage(chatId, debugInfo, { parse_mode: 'Markdown' });
+    } catch (error) {
+      console.error('Erro ao enviar debug info:', error);
+      await this.bot.sendMessage(chatId, `❌ Erro ao obter informações de debug: ${error.message}`);
+    }
+  }
+
+  /**
+   * Envia logs recentes do sistema
+   */
+  async sendRecentLogs(chatId) {
+    try {
+      const recentMessages = await database.all(`
+        SELECT m.*, u.phone, u.name
+        FROM messages m
+        JOIN users u ON m.user_id = u.id
+        ORDER BY m.created_at DESC
+        LIMIT 10
+      `);
+
+      let logsText = `📋 *LOGS RECENTES (10 últimas mensagens)*\n\n`;
+      
+      if (!recentMessages || recentMessages.length === 0) {
+        logsText += '📭 Nenhuma mensagem registrada ainda.';
+      } else {
+        recentMessages.forEach((msg, index) => {
+          const time = moment(msg.created_at).format('DD/MM HH:mm');
+          const type = msg.message_type === 'received' ? '📨' : '📤';
+          const content = (msg.message_content || '').substring(0, 50);
+          
+          logsText += `${index + 1}. ${type} ${msg.phone} (${time})\n`;
+          if (msg.name) logsText += `   👤 ${msg.name}\n`;
+          logsText += `   💬 ${content}${content.length >= 50 ? '...' : ''}\n\n`;
+        });
+      }
+
+      logsText += `⏰ *Gerado em:* ${moment().format('DD/MM/YYYY HH:mm:ss')}`;
+
+      await this.bot.sendMessage(chatId, logsText, { parse_mode: 'Markdown' });
+    } catch (error) {
+      console.error('Erro ao enviar logs:', error);
+      await this.bot.sendMessage(chatId, `❌ Erro ao obter logs: ${error.message}`);
     }
   }
 }

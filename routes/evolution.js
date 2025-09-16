@@ -1,4 +1,7 @@
 const { botHandler } = require("../services/bot-handler");
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 class EvolutionWebhooks {
   constructor(broadcastFunction) {
@@ -34,6 +37,7 @@ class EvolutionWebhooks {
                    data.key.remoteJid?.replace('@c.us', ''); // Para contatos individuais
       
       let messageContent = '';
+      let mediaData = null;
       
       // Diferentes tipos de mensagem
       if (data.message.conversation) {
@@ -42,12 +46,16 @@ class EvolutionWebhooks {
         messageContent = data.message.extendedTextMessage.text;
       } else if (data.message.imageMessage?.caption) {
         messageContent = data.message.imageMessage.caption || '[Imagem]';
+        mediaData = await this.processMediaMessage(data.message.imageMessage, 'image', data.key.id, instance);
       } else if (data.message.videoMessage?.caption) {
         messageContent = data.message.videoMessage.caption || '[Vídeo]';
+        mediaData = await this.processMediaMessage(data.message.videoMessage, 'video', data.key.id, instance);
       } else if (data.message.documentMessage?.title) {
         messageContent = data.message.documentMessage.title || '[Documento]';
+        mediaData = await this.processMediaMessage(data.message.documentMessage, 'document', data.key.id, instance);
       } else if (data.message.audioMessage) {
         messageContent = '[Áudio]';
+        mediaData = await this.processMediaMessage(data.message.audioMessage, 'audio', data.key.id, instance);
       } else if (data.message.stickerMessage) {
         messageContent = '[Sticker]';
       } else {
@@ -61,7 +69,8 @@ class EvolutionWebhooks {
           pushName: data.pushName,
           messageType: data.messageType,
           timestamp: data.messageTimestamp,
-          instance: instance
+          instance: instance,
+          mediaData: mediaData
         });
 
         // Broadcast para clientes conectados
@@ -72,10 +81,170 @@ class EvolutionWebhooks {
             content: messageContent, 
             pushName: data.pushName,
             instance: instance,
-            timestamp: data.messageTimestamp
+            timestamp: data.messageTimestamp,
+            hasMedia: !!mediaData
           } 
         });
       }
+    }
+  }
+
+  /**
+   * Processa mensagens de mídia (imagem, vídeo, documento, áudio)
+   */
+  async processMediaMessage(mediaMessage, mediaType, messageId, instance) {
+    try {
+      console.log(`📎 Processando mídia ${mediaType} - ID: ${messageId}`);
+      
+      let mediaBuffer = null;
+      let fileName = '';
+      let mimeType = '';
+      let fileSize = 0;
+
+      // Extrair informações da mídia
+      switch (mediaType) {
+        case 'image':
+          fileName = `image_${messageId}.jpg`;
+          mimeType = mediaMessage.mimetype || 'image/jpeg';
+          fileSize = mediaMessage.fileLength || 0;
+          break;
+        case 'video':
+          fileName = `video_${messageId}.mp4`;
+          mimeType = mediaMessage.mimetype || 'video/mp4';
+          fileSize = mediaMessage.fileLength || 0;
+          break;
+        case 'document':
+          fileName = mediaMessage.fileName || `document_${messageId}`;
+          mimeType = mediaMessage.mimetype || 'application/octet-stream';
+          fileSize = mediaMessage.fileLength || 0;
+          break;
+        case 'audio':
+          fileName = `audio_${messageId}.ogg`;
+          mimeType = mediaMessage.mimetype || 'audio/ogg';
+          fileSize = mediaMessage.fileLength || 0;
+          break;
+      }
+
+      // Verificar se há base64 no webhook
+      if (mediaMessage.base64) {
+        console.log(`✅ Base64 encontrado no webhook para ${fileName}`);
+        mediaBuffer = Buffer.from(mediaMessage.base64, 'base64');
+      } else {
+        console.log(`⚠️ Base64 não encontrado, buscando via API para ${fileName}`);
+        mediaBuffer = await this.fetchMediaFromAPI(messageId, instance);
+      }
+
+      if (!mediaBuffer) {
+        console.log(`❌ Não foi possível obter mídia para ${fileName}`);
+        return null;
+      }
+
+      const maxSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '20');
+      const maxSizeBytes = maxSizeMB * 1024 * 1024;
+
+      // Se arquivo for muito grande, salvar no servidor
+      if (mediaBuffer.length > maxSizeBytes) {
+        console.log(`📁 Arquivo grande (${(mediaBuffer.length / 1024 / 1024).toFixed(2)}MB), salvando no servidor`);
+        const filePath = await this.saveMediaToServer(mediaBuffer, fileName);
+        return {
+          type: 'file_link',
+          fileName: fileName,
+          mimeType: mimeType,
+          size: mediaBuffer.length,
+          filePath: filePath,
+          downloadUrl: `${process.env.EVOLUTION_API_URL || 'http://localhost:3002'}/download/${path.basename(filePath)}`
+        };
+      }
+
+      return {
+        type: 'buffer',
+        fileName: fileName,
+        mimeType: mimeType,
+        size: mediaBuffer.length,
+        buffer: mediaBuffer
+      };
+
+    } catch (error) {
+      console.error(`❌ Erro ao processar mídia ${mediaType}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Busca mídia via Evolution API quando não há base64 no webhook
+   */
+  async fetchMediaFromAPI(messageId, instance) {
+    try {
+      const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKey) {
+        headers['apikey'] = apiKey;
+      }
+
+      const url = `${evolutionUrl}/chat/getBase64FromMediaMessage/${instance}`;
+      const payload = {
+        message: {
+          key: {
+            id: messageId
+          }
+        }
+      };
+
+      console.log(`🔍 Buscando mídia via API: ${url}`);
+      const response = await axios.post(url, payload, { 
+        headers,
+        timeout: 30000 
+      });
+
+      if (response.data && response.data.base64) {
+        console.log(`✅ Base64 obtido via API para ${messageId}`);
+        return Buffer.from(response.data.base64, 'base64');
+      }
+
+      console.log(`❌ API não retornou base64 para ${messageId}`);
+      return null;
+
+    } catch (error) {
+      console.error(`❌ Erro ao buscar mídia via API:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Salva mídia no servidor para arquivos grandes
+   */
+  async saveMediaToServer(buffer, fileName) {
+    try {
+      const tempDir = process.env.TEMP_FILES_DIR || './temp';
+      
+      // Criar diretório se não existir
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const filePath = path.join(tempDir, `${Date.now()}_${fileName}`);
+      fs.writeFileSync(filePath, buffer);
+      
+      console.log(`💾 Arquivo salvo: ${filePath}`);
+      
+      // Agendar limpeza do arquivo em 24h
+      setTimeout(() => {
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`🧹 Arquivo temporário removido: ${filePath}`);
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao remover arquivo temporário:`, error);
+        }
+      }, 24 * 60 * 60 * 1000); // 24 horas
+
+      return filePath;
+    } catch (error) {
+      console.error(`❌ Erro ao salvar arquivo:`, error);
+      throw error;
     }
   }
 
